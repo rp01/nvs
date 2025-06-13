@@ -88,8 +88,8 @@ nvs use 18.17.0
 ### Basic Commands
 
 ```bash
-# Install a Node.js version
-nvs install <version>
+# Install a Node.js version (force reinstall if already exists with --force)
+nvs install <version> [--force]
 
 # Switch to a version
 nvs use <version>
@@ -211,6 +211,7 @@ deno compile --allow-all --output nvs nvs.ts
 ```bash
 # Test installation
 ./nvs install 18.17.0
+./nvs install 18.17.0 --force
 ./nvs list
 ./nvs use 18.17.0
 

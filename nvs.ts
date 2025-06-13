@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-net --allow-read --allow-write --allow-run --allow-env
 
-import { join,  } from "https://deno.land/std@0.208.0/path/mod.ts";
+import { join } from "https://deno.land/std@0.208.0/path/mod.ts";
 import { ensureDir, exists } from "https://deno.land/std@0.208.0/fs/mod.ts";
 import { decompress } from "https://deno.land/x/zip@v1.2.5/mod.ts";
 
@@ -177,7 +177,7 @@ class NodeVersionSwitcher {
         console.log("Extraction completed");
     }
 
-    async install(version: string, targetOs?: string, targetArch?: string): Promise<void> {
+    async install(version: string, targetOs?: string, targetArch?: string, force: boolean = false): Promise<void> {
         const osInfo = targetOs ? ` for ${targetOs}` : "";
         const archInfo = targetArch ? `-${targetArch}` : "";
 
@@ -190,7 +190,11 @@ class NodeVersionSwitcher {
 
         const versionDir = join(this.versionsDir, versionKey);
 
-        if (await exists(versionDir)) {
+        // Handle --force: remove existing directory if it exists
+        if (force && await exists(versionDir)) {
+            console.log(`Forcing reinstall of Node.js v${version}${osInfo}${archInfo}`);
+            await Deno.remove(versionDir, { recursive: true });
+        } else if (!force && await exists(versionDir)) {
             console.log(`Node.js v${version}${osInfo}${archInfo} is already installed`);
             return;
         }
@@ -472,12 +476,12 @@ USAGE:
   nvs <command> [version] [options]
 
 COMMANDS:
-  install <version> [--os <os>] [--arch <arch>]   Install a Node.js version
-  use <version> [--os <os>] [--arch <arch>]       Switch to a Node.js version  
-  list                                            List all installed versions
-  current                                         Show currently active version
-  uninstall <version>                             Remove a Node.js version
-  help                                            Show this help message
+  install <version> [--os <os>] [--arch <arch>] [--force]   Install a Node.js version (force reinstall if exists)
+  use <version> [--os <os>] [--arch <arch>]                 Switch to a Node.js version  
+  list                                                      List all installed versions
+  current                                                   Show currently active version
+  uninstall <version>                                       Remove a Node.js version
+  help                                                      Show this help message
 
 CROSS-PLATFORM OPTIONS:
   --os <platform>       Target OS: windows, linux, darwin (default: current OS)
@@ -486,6 +490,7 @@ CROSS-PLATFORM OPTIONS:
 EXAMPLES:
   # Basic usage
   nvs install 18.17.0                    # Install for current platform
+  nvs install 18.17.0 --force            # Force reinstall if already installed
   nvs use 18.17.0                        # Switch to v18.17.0
   nvs list                               # Show all installed versions
   
@@ -544,6 +549,7 @@ async function main(): Promise<void> {
                 // Parse additional arguments for cross-platform installation
                 let targetOs: string | undefined;
                 let targetArch: string | undefined;
+                let force = false;
 
                 for (let i = 2; i < args.length; i++) {
                     if (args[i] === "--os" && i + 1 < args.length) {
@@ -552,10 +558,12 @@ async function main(): Promise<void> {
                     } else if (args[i] === "--arch" && i + 1 < args.length) {
                         targetArch = args[i + 1];
                         i++; // Skip next argument
+                    } else if (args[i] === "--force") {
+                        force = true;
                     }
                 }
 
-                await nvs.install(version, targetOs, targetArch);
+                await nvs.install(version, targetOs, targetArch, force);
                 break;
             }
 
