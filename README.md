@@ -7,7 +7,7 @@
 **🚀 A fast, lightweight Node.js version manager that requires NO admin
 privileges!**
 
-Built with Deno and compiled to a single binary, NVS solves the common pain
+Built with Go and compiled to a single binary, NVS solves the common pain
 points of existing Node version managers:
 
 - ✅ **No admin/root privileges required** - Works entirely in user space
@@ -54,13 +54,17 @@ sudo mv nvs /usr/local/bin/  # Optional: for global access
 git clone https://github.com/rp01/nvs.git
 cd nvs
 
-# Build with Deno
-deno compile --allow-all --output nvs nvs.ts
+# Build with Go
+go build -o nvs .
 
 # Cross-compile for other platforms
-deno compile --allow-all --target x86_64-pc-windows-msvc --output nvs-windows.exe nvs.ts
-deno compile --allow-all --target x86_64-apple-darwin --output nvs-macos nvs.ts
-deno compile --allow-all --target x86_64-unknown-linux-gnu --output nvs-linux nvs.ts
+GOOS=windows GOARCH=amd64 go build -o nvs-windows.exe .
+GOOS=darwin GOARCH=amd64 go build -o nvs-macos .
+GOOS=linux GOARCH=amd64 go build -o nvs-linux .
+
+# Build for ARM64
+GOOS=darwin GOARCH=arm64 go build -o nvs-macos-arm64 .
+GOOS=linux GOARCH=arm64 go build -o nvs-linux-arm64 .
 ```
 
 ## 🚀 Quick Start
@@ -193,22 +197,25 @@ NVS organizes everything in `~/.nvs/`:
 
 ### Prerequisites
 
-- [Deno](https://deno.land/) 1.36+
+- [Go](https://golang.org/) 1.21+
 
 ### Running from Source
 
 ```bash
-# Run directly with Deno
-deno run --allow-all nvs.ts install 20.5.0
+# Run directly with Go
+go run . install 20.5.0
 
-# Or compile and run
-deno compile --allow-all --output nvs nvs.ts
+# Or build and run
+go build -o nvs .
 ./nvs install 20.5.0
 ```
 
 ### Testing
 
 ```bash
+# Run unit tests
+go test ./...
+
 # Test installation
 ./nvs install 18.17.0
 ./nvs list

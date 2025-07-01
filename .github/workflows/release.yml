@@ -16,27 +16,36 @@ permissions:
 
 jobs:
   build:
-    name: Build for ${{ matrix.target }}
+    name: Build for ${{ matrix.goos }}-${{ matrix.goarch }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
           # Linux
-          - target: x86_64-unknown-linux-gnu
+          - goos: linux
+            goarch: amd64
             os: ubuntu-latest
             output: nvs-linux-x64
             
+          - goos: linux
+            goarch: arm64
+            os: ubuntu-latest
+            output: nvs-linux-arm64
+            
           # macOS
-          - target: x86_64-apple-darwin
+          - goos: darwin
+            goarch: amd64
             os: macos-latest
             output: nvs-macos-x64
             
-          - target: aarch64-apple-darwin
+          - goos: darwin
+            goarch: arm64
             os: macos-latest
             output: nvs-macos-arm64
             
           # Windows
-          - target: x86_64-pc-windows-msvc
+          - goos: windows
+            goarch: amd64
             os: windows-latest
             output: nvs-windows-x64.exe
 
@@ -44,14 +53,18 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
+      - name: Setup Go
+        uses: actions/setup-go@v4
         with:
-          deno-version: v2.x
+          go-version: '1.21'
 
       - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
         run: |
-          deno compile --allow-all --target ${{ matrix.target }} --output ${{ matrix.output }} nvs.ts
+          go build -ldflags="-s -w" -o ${{ matrix.output }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -95,6 +108,7 @@ jobs:
           generate_release_notes: true
           files: |
             nvs-linux-x64
+            nvs-linux-arm64
             nvs-macos-x64
             nvs-macos-arm64
             nvs-windows-x64.exe
