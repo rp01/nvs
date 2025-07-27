@@ -70,11 +70,17 @@ GOOS=linux GOARCH=arm64 go build -o nvs-linux-arm64 .
 ## 🚀 Quick Start
 
 ```bash
-# Install your first Node.js version
-nvs install 20.5.0
+# Install a specific Node.js version
+nvs install 20.5.0  
 
-# Switch to the installed version
-nvs use 20.5.0
+# Install the latest Node.js v20.x.x version
+nvs install 20  
+
+# Switch to a specific installed version
+nvs use 20.5.0       
+
+# Switch to the latest installed v20.x.x version
+nvs use 20 
 
 # List all installed versions
 nvs list
@@ -272,4 +278,4 @@ for details.
 
 ---
 
-**Made with ❤️ using Deno**
+**Made with ❤️ using Go**
