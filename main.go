@@ -2,13 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mholt/archives"
@@ -118,6 +121,75 @@ func (nvs *NodeVersionSwitcher) installSelf() error {
 	fmt.Printf("Add %s to your PATH to use 'nvs' command globally\n", nvs.BinDir)
 
 	return nil
+}
+
+// compareVersions compares two semantic versions (e.g., "20.19.4" vs "20.9.0")
+func compareVersions(v1, v2 string) int {
+	parts1 := strings.Split(v1, ".")
+	parts2 := strings.Split(v2, ".")
+
+	for i := 0; i < len(parts1) && i < len(parts2); i++ {
+		n1, _ := strconv.Atoi(parts1[i])
+		n2, _ := strconv.Atoi(parts2[i])
+		if n1 != n2 {
+			return n1 - n2
+		}
+	}
+	return len(parts1) - len(parts2)
+}
+
+// resolveVersion resolves a partial version (e.g., "20") to the latest full version (e.g., "20.19.4")
+func (nvs *NodeVersionSwitcher) resolveVersion(partialVersion string) (string, error) {
+	// If the version is already a full semver (e.g., "20.6.0"), return it
+	if regexp.MustCompile(`^\d+\.\d+\.\d+$`).MatchString(partialVersion) {
+		return partialVersion, nil
+	}
+
+	resp, err := http.Get("https://nodejs.org/dist/index.json")
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch version list: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to fetch version list: HTTP %d %s", resp.StatusCode, resp.Status)
+	}
+
+	var versions []struct {
+		Version string `json:"version"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&versions); err != nil {
+		return "", fmt.Errorf("failed to parse version list: %w", err)
+	}
+
+	// Find the latest version matching the partial version (e.g., "20" matches "v20.x.x")
+	latestVersion := ""
+	for _, v := range versions {
+		if strings.HasPrefix(v.Version, "v"+partialVersion+".") {
+			version := strings.TrimPrefix(v.Version, "v")
+			if latestVersion == "" || compareVersions(version, latestVersion) > 0 {
+				latestVersion = version
+			}
+		}
+	}
+
+	if latestVersion == "" {
+		return "", fmt.Errorf("no version found matching %s", partialVersion)
+	}
+
+	return latestVersion, nil
+}
+
+// resolveAndUpdateVersion resolves a partial version and updates it, handling errors and logging
+func (nvs *NodeVersionSwitcher) resolveAndUpdateVersion(version string) (string, error) {
+	resolvedVersion, err := nvs.resolveVersion(version)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve version %s: %w", version, err)
+	}
+	if resolvedVersion != version {
+		fmt.Printf("Resolved version %s to %s\n", version, resolvedVersion)
+	}
+	return resolvedVersion, nil
 }
 
 // getNodeRelease generates Node.js release information
@@ -289,6 +361,12 @@ func (nvs *NodeVersionSwitcher) extractArchive(archivePath, extractPath, ext str
 
 // Install installs a Node.js version
 func (nvs *NodeVersionSwitcher) Install(version, targetOS, targetArch string) error {
+	// Resolve partial version to full version
+	version, err := nvs.resolveAndUpdateVersion(version)
+	if err != nil {
+		return err
+	}
+
 	osInfo := ""
 	if targetOS != "" {
 		osInfo = fmt.Sprintf(" for %s", targetOS)
@@ -382,6 +460,12 @@ func (nvs *NodeVersionSwitcher) Install(version, targetOS, targetArch string) er
 
 // Use switches to a specific Node.js version
 func (nvs *NodeVersionSwitcher) Use(version, targetOS, targetArch string) error {
+	// Resolve partial version to full version
+	version, err := nvs.resolveAndUpdateVersion(version)
+	if err != nil {
+		return err
+	}
+
 	// Create version key for lookup
 	versionKey := version
 	if targetOS != "" || targetArch != "" {
@@ -642,6 +726,11 @@ func (nvs *NodeVersionSwitcher) Current() error {
 
 // Uninstall removes a Node.js version
 func (nvs *NodeVersionSwitcher) Uninstall(version string) error {
+	version, err := nvs.resolveAndUpdateVersion(version)
+	if err != nil {
+		return err
+	}
+
 	versionDir := filepath.Join(nvs.VersionsDir, version)
 
 	if _, err := os.Stat(versionDir); os.IsNotExist(err) {
@@ -685,9 +774,12 @@ CROSS-PLATFORM OPTIONS:
 
 EXAMPLES:
   # Basic usage
-  nvs install 18.17.0                    # Install for current platform
-  nvs use 18.17.0                        # Switch to v18.17.0
-  nvs list                               # Show all installed versions
+  nvs install latest                    # Install the latest Node.js version
+  nvs install 20                        # Install latest 20.x.x version
+  nvs install 18.17.0                   # Install specific version
+  nvs use 20                            # Switch to latest 20.x.x version
+  nvs use 18.17.0                       # Switch to v18.17.0
+  nvs list                              # Show all installed versions
   
   # Cross-platform installation  
   nvs install 20.5.0 --os linux --arch x64      # Install Linux x64 version
@@ -709,6 +801,7 @@ FEATURES:
   ✅ Fast version switching
   ✅ Isolated installations
   ✅ Multiple architectures per version
+  ✅ Partial version support (e.g., 'nvs install 20', 'nvs use 20')
 
 All Node.js versions are installed to: ~/.nvs/versions/
 `
