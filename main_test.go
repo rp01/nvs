@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -479,4 +482,118 @@ func TestCreateVersionLinks(t *testing.T) {
 	if _, err := os.Stat(linkDir); os.IsNotExist(err) {
 		t.Errorf("Link directory was not created")
 	}
+}
+
+func TestCompareVersions(t *testing.T) {
+    tests := []struct {
+        name     string
+        v1       string
+        v2       string
+        expected int
+    }{
+        {
+            name:     "v1 greater than v2",
+            v1:       "20.19.4",
+            v2:       "20.9.0",
+            expected: 10,
+        },
+        {
+            name:     "v1 less than v2",
+            v1:       "18.17.0",
+            v2:       "20.5.0",
+            expected: -2,
+        },
+        {
+            name:     "equal versions",
+            v1:       "18.17.0",
+            v2:       "18.17.0",
+            expected: 0,
+        },
+        {
+            name:     "v1 minor greater",
+            v1:       "20.10.0",
+            v2:       "20.9.0",
+            expected: 1,
+        },
+        {
+            name:     "v1 patch greater",
+            v1:       "20.9.1",
+            v2:       "20.9.0",
+            expected: 1,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            result := compareVersions(tt.v1, tt.v2)
+            if result != tt.expected {
+                t.Errorf("compareVersions(%s, %s): expected %d, got %d", tt.v1, tt.v2, tt.expected, result)
+            }
+        })
+    }
+}
+
+func TestResolveVersion(t *testing.T) {
+    // Mock Node.js version index
+    mockVersions := []struct {
+        Version string `json:"version"`
+    }{
+        {Version: "v20.19.4"},
+        {Version: "v20.9.0"},
+        {Version: "v18.17.0"},
+        {Version: "v22.16.0"},
+    }
+    mockResponse, _ := json.Marshal(mockVersions)
+
+    // Create mock server
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        w.WriteHeader(http.StatusOK)
+        w.Write(mockResponse)
+    }))
+    defer server.Close()
+
+    _, nvs := setupTestEnvironment(t)
+
+    tests := []struct {
+        name           string
+        partialVersion string
+        expected       string
+        expectErr      bool
+    }{
+        {
+            name:           "Full version",
+            partialVersion: "20.19.4",
+            expected:       "20.19.4",
+            expectErr:      false,
+        },
+        {
+            name:           "Partial version major",
+            partialVersion: "20",
+            expected:       "20.19.4",
+            expectErr:      false,
+        },
+        {
+            name:           "Non-existent version",
+            partialVersion: "999",
+            expectErr:      true,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            version, err := nvs.resolveVersion(tt.partialVersion)
+            if tt.expectErr {
+                if err == nil {
+                    t.Errorf("Expected error but got none")
+                }
+                return
+            }
+            if err != nil {
+                t.Errorf("Unexpected error: %v", err)
+            }
+            if version != tt.expected {
+                t.Errorf("Expected version %s, got %s", tt.expected, version)
+            }
+        })
+    }
 }
