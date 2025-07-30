@@ -115,7 +115,57 @@ func (nvs *NodeVersionSwitcher) installSelf() error {
 	}
 
 	fmt.Printf("NVS installed to: %s\n", targetPath)
-	fmt.Printf("Add %s to your PATH to use 'nvs' command globally\n", nvs.BinDir)
+
+	// Attempt automatic PATH setup
+	if err := nvs.setupInitialPath(); err != nil {
+		fmt.Printf("Add %s to your PATH to use 'nvs' command globally\n", nvs.BinDir)
+		fmt.Printf("Or run: nvs setup (for detailed instructions)\n")
+	} else {
+		fmt.Printf("✅ NVS has been added to your PATH automatically!\n")
+		fmt.Printf("🔄 Restart your terminal or run the appropriate source command to use 'nvs'\n")
+	}
+
+	return nil
+}
+
+// setupInitialPath attempts to add NVS bin directory to PATH automatically
+func (nvs *NodeVersionSwitcher) setupInitialPath() error {
+	fmt.Println("🔧 Attempting automatic PATH setup...")
+
+	if runtime.GOOS == "windows" {
+		// Detect if running in Git Bash or similar Unix-like environment on Windows
+		isGitBash := os.Getenv("MSYSTEM") != "" || os.Getenv("TERM") != "" || strings.Contains(strings.ToLower(os.Getenv("SHELL")), "bash")
+
+		if isGitBash {
+			// Try to append to .bashrc
+			bashrcPath := filepath.Join(os.Getenv("HOME"), ".bashrc")
+			exportLine := fmt.Sprintf("export PATH=\"%s:$PATH\"", nvs.BinDir)
+
+			if err := nvs.appendToFile(bashrcPath, exportLine); err != nil {
+				return fmt.Errorf("could not update .bashrc: %w", err)
+			}
+			fmt.Printf("✅ Updated ~/.bashrc\n")
+			fmt.Printf("   Restart your Git Bash or run: source ~/.bashrc\n")
+		} else {
+			return fmt.Errorf("automatic setup not supported for Command Prompt - use 'nvs setup' for manual instructions")
+		}
+	} else {
+		// Unix-like systems
+		shell := os.Getenv("SHELL")
+		configFile := ".bashrc"
+		if strings.Contains(shell, "zsh") {
+			configFile = ".zshrc"
+		}
+
+		configPath := filepath.Join(os.Getenv("HOME"), configFile)
+		exportLine := fmt.Sprintf("export PATH=\"%s:$PATH\"", nvs.BinDir)
+
+		if err := nvs.appendToFile(configPath, exportLine); err != nil {
+			return fmt.Errorf("could not update %s: %w", configFile, err)
+		}
+		fmt.Printf("✅ Updated ~/%s\n", configFile)
+		fmt.Printf("   Restart your terminal or run: source ~/%s\n", configFile)
+	}
 
 	return nil
 }
@@ -373,6 +423,13 @@ func (nvs *NodeVersionSwitcher) Install(version, targetOS, targetArch string) er
 	fmt.Printf("Node.js v%s%s%s installed successfully\n", version, osInfo, archInfo)
 	fmt.Printf("📁 Installed to: %s\n", versionDir)
 
+	// Fix npm/npx symlinks on Unix systems
+	if runtime.GOOS != "windows" {
+		if err := nvs.fixNpmSymlinks(versionDir); err != nil {
+			fmt.Printf("⚠️  Warning: Could not fix npm/npx symlinks: %v\n", err)
+		}
+	}
+
 	if targetOS != "" && targetOS != runtime.GOOS {
 		fmt.Printf("⚠️  Note: This is a cross-platform installation for %s\n", targetOS)
 	}
@@ -380,8 +437,47 @@ func (nvs *NodeVersionSwitcher) Install(version, targetOS, targetArch string) er
 	return nil
 }
 
+// fixNpmSymlinks fixes npm/npx symlinks that may have been extracted incorrectly
+func (nvs *NodeVersionSwitcher) fixNpmSymlinks(versionDir string) error {
+	binDir := filepath.Join(versionDir, "bin")
+	npmLibBin := filepath.Join(versionDir, "lib", "node_modules", "npm", "bin")
+
+	// Check if npm lib directory exists
+	if _, err := os.Stat(npmLibBin); err != nil {
+		return nil // No npm to fix
+	}
+
+	// Fix npm
+	npmBin := filepath.Join(binDir, "npm")
+	npmTarget := filepath.Join(npmLibBin, "npm-cli.js")
+
+	if stat, err := os.Stat(npmBin); err == nil && stat.Size() == 0 {
+		os.Remove(npmBin)
+		// Create a shell script wrapper to npm-cli.js
+		npmScript := fmt.Sprintf("#!/bin/sh\nexec \"%s\" \"$@\"\n", npmTarget)
+		if err := os.WriteFile(npmBin, []byte(npmScript), 0755); err != nil {
+			return fmt.Errorf("failed to create npm script: %w", err)
+		}
+	}
+
+	// Fix npx
+	npxBin := filepath.Join(binDir, "npx")
+	npxTarget := filepath.Join(npmLibBin, "npx-cli.js")
+
+	if stat, err := os.Stat(npxBin); err == nil && stat.Size() == 0 {
+		os.Remove(npxBin)
+		// Create a shell script wrapper to npx-cli.js
+		npxScript := fmt.Sprintf("#!/bin/sh\nexec \"%s\" \"$@\"\n", npxTarget)
+		if err := os.WriteFile(npxBin, []byte(npxScript), 0755); err != nil {
+			return fmt.Errorf("failed to create npx script: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // Use switches to a specific Node.js version
-func (nvs *NodeVersionSwitcher) Use(version, targetOS, targetArch string) error {
+func (nvs *NodeVersionSwitcher) Use(version, targetOS, targetArch string, global bool) error {
 	// Create version key for lookup
 	versionKey := version
 	if targetOS != "" || targetArch != "" {
@@ -454,27 +550,143 @@ func (nvs *NodeVersionSwitcher) Use(version, targetOS, targetArch string) error 
 		}
 		fmt.Printf("   Platform: %s-%s\n", platform, arch)
 	}
-	fmt.Printf("\n📍 Node.js binaries available at: %s\n", binPath)
+
+	if global {
+		// Global installation - update shell configuration files
+		return nvs.setupGlobalEnvironment(binPath)
+	} else {
+		// Local session - just show the export command and set in current process
+		fmt.Printf("\n📍 Node.js binaries available at: %s\n", binPath)
+		return nvs.setLocalEnvironment(binPath)
+	}
+}
+
+// setLocalEnvironment sets up the environment for the current session
+func (nvs *NodeVersionSwitcher) setLocalEnvironment(binPath string) error {
+	currentBinPath := filepath.Join(nvs.NVSDir, "current-bin")
+
+	// Set environment for current process (this affects child processes)
+	currentPath := os.Getenv("PATH")
+	var newPath string
 
 	if runtime.GOOS == "windows" {
-		fmt.Printf("\n🔧 To use globally, add to your PATH:\n")
-		fmt.Printf("   set PATH=%s;%%PATH%%\n", binPath)
-		fmt.Printf("\n   Or run: setx PATH \"%s;%%PATH%%\"\n", binPath)
+		newPath = fmt.Sprintf("%s;%s;%s", currentBinPath, nvs.BinDir, currentPath)
 	} else {
-		fmt.Printf("\n🔧 To use globally, add to your PATH:\n")
-		fmt.Printf("   export PATH=\"%s:$PATH\"\n", binPath)
-		fmt.Printf("\n   Add this to your ~/.bashrc or ~/.zshrc for persistence\n")
+		newPath = fmt.Sprintf("%s:%s:%s", currentBinPath, nvs.BinDir, currentPath)
 	}
 
-	// Create activation script
-	if err := nvs.createActivationScript(binPath); err != nil {
-		return err
+	os.Setenv("PATH", newPath)
+
+	fmt.Printf("\n🔧 Environment set for current session!\n")
+	fmt.Printf("   You can now use: node, npm, npx\n")
+
+	// Also show the export command for manual use in other terminals
+	if runtime.GOOS == "windows" {
+		isGitBash := os.Getenv("MSYSTEM") != "" || os.Getenv("TERM") != "" || strings.Contains(strings.ToLower(os.Getenv("SHELL")), "bash")
+		if isGitBash {
+			fmt.Printf("\n💡 To use in other Git Bash sessions:\n")
+			fmt.Printf("   export PATH=\"%s:$PATH\"\n", binPath)
+		} else {
+			fmt.Printf("\n💡 To use in other Command Prompt sessions:\n")
+			fmt.Printf("   set PATH=%s;%%PATH%%\n", binPath)
+		}
+	} else {
+		fmt.Printf("\n� To use in other terminal sessions:\n")
+		fmt.Printf("   export PATH=\"%s:$PATH\"\n", binPath)
+	}
+
+	fmt.Printf("\n� For permanent setup across all sessions, use: nvs use %s --global\n", getCurrentVersionFromPath(binPath))
+
+	return nil
+}
+
+// setupGlobalEnvironment sets up permanent global environment
+func (nvs *NodeVersionSwitcher) setupGlobalEnvironment(binPath string) error {
+	currentBinPath := filepath.Join(nvs.NVSDir, "current-bin")
+
+	fmt.Printf("\n🌍 Setting up global environment...\n")
+
+	if runtime.GOOS == "windows" {
+		isGitBash := os.Getenv("MSYSTEM") != "" || os.Getenv("TERM") != "" || strings.Contains(strings.ToLower(os.Getenv("SHELL")), "bash")
+
+		if isGitBash {
+			// Try to append to .bashrc
+			bashrcPath := filepath.Join(os.Getenv("HOME"), ".bashrc")
+			exportLine := fmt.Sprintf("export PATH=\"%s:%s:$PATH\"", currentBinPath, nvs.BinDir)
+
+			if err := nvs.appendToFile(bashrcPath, exportLine); err != nil {
+				fmt.Printf("⚠️  Could not automatically update .bashrc: %v\n", err)
+				fmt.Printf("   Please manually add: %s\n", exportLine)
+			} else {
+				fmt.Printf("✅ Updated ~/.bashrc\n")
+				fmt.Printf("   Restart your terminal or run: source ~/.bashrc\n")
+			}
+		} else {
+			fmt.Printf("⚠️  Automatic global setup not supported for Command Prompt\n")
+			fmt.Printf("   Please manually add to your PATH environment variable:\n")
+			fmt.Printf("   %s;%s\n", currentBinPath, nvs.BinDir)
+		}
+	} else {
+		// Unix-like systems
+		shell := os.Getenv("SHELL")
+		configFile := ".bashrc"
+		if strings.Contains(shell, "zsh") {
+			configFile = ".zshrc"
+		}
+
+		configPath := filepath.Join(os.Getenv("HOME"), configFile)
+		exportLine := fmt.Sprintf("export PATH=\"%s:%s:$PATH\"", currentBinPath, nvs.BinDir)
+
+		if err := nvs.appendToFile(configPath, exportLine); err != nil {
+			fmt.Printf("⚠️  Could not automatically update %s: %v\n", configFile, err)
+			fmt.Printf("   Please manually add: %s\n", exportLine)
+		} else {
+			fmt.Printf("✅ Updated ~/%s\n", configFile)
+			fmt.Printf("   Restart your terminal or run: source ~/%s\n", configFile)
+		}
 	}
 
 	return nil
 }
 
-// createVersionLinks creates symlinks or batch files for easy access
+// appendToFile appends a line to a file if it doesn't already exist
+func (nvs *NodeVersionSwitcher) appendToFile(filePath, line string) error {
+	// Check if line already exists
+	content, err := os.ReadFile(filePath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	if strings.Contains(string(content), line) {
+		return nil // Line already exists
+	}
+
+	// Append to file
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, err = file.WriteString("\n" + line + "\n")
+	return err
+}
+
+// getCurrentVersionFromPath extracts version from path
+func getCurrentVersionFromPath(path string) string {
+	parts := strings.Split(path, string(os.PathSeparator))
+	for _, part := range parts {
+		if strings.Contains(part, "versions") {
+			// Find the next part which should be the version
+			for i, p := range parts {
+				if p == "versions" && i+1 < len(parts) {
+					return parts[i+1]
+				}
+			}
+		}
+	}
+	return "unknown"
+} // createVersionLinks creates symlinks or batch files for easy access
 func (nvs *NodeVersionSwitcher) createVersionLinks(version, binPath string) error {
 	linkDir := filepath.Join(nvs.NVSDir, "current-bin")
 
@@ -521,39 +733,6 @@ func (nvs *NodeVersionSwitcher) createVersionLinks(version, binPath string) erro
 			}
 		}
 	}
-
-	return nil
-}
-
-// createActivationScript creates an activation script
-func (nvs *NodeVersionSwitcher) createActivationScript(binPath string) error {
-	isWindows := runtime.GOOS == "windows"
-	var scriptExt, scriptContent string
-
-	if isWindows {
-		scriptExt = ".bat"
-		scriptContent = fmt.Sprintf(`@echo off
-echo Activating Node.js environment...
-set PATH=%s;%%PATH%%
-echo Node.js path updated. You can now use 'node', 'npm', and 'npx' commands.
-cmd /k`, binPath)
-	} else {
-		scriptExt = ".sh"
-		scriptContent = fmt.Sprintf(`#!/bin/bash
-echo "Activating Node.js environment..."
-export PATH="%s:$PATH"
-echo "Node.js path updated. You can now use 'node', 'npm', and 'npx' commands."
-exec "$SHELL"`, binPath)
-	}
-
-	scriptPath := filepath.Join(nvs.NVSDir, "activate"+scriptExt)
-
-	if err := os.WriteFile(scriptPath, []byte(scriptContent), 0755); err != nil {
-		return fmt.Errorf("failed to create activation script: %w", err)
-	}
-
-	fmt.Printf("\n🚀 Quick activation script created: %s\n", scriptPath)
-	fmt.Println("   Run this script to activate Node.js in a new shell session")
 
 	return nil
 }
@@ -663,6 +842,58 @@ func (nvs *NodeVersionSwitcher) Uninstall(version string) error {
 	return nil
 }
 
+// Setup provides instructions for permanent PATH configuration
+func (nvs *NodeVersionSwitcher) Setup() error {
+	currentBinPath := filepath.Join(nvs.NVSDir, "current-bin")
+
+	fmt.Println("🔧 NVS Permanent Setup Instructions")
+	fmt.Println("=====================================")
+	fmt.Println("\nRun ONE of the following commands to set up NVS permanently:")
+
+	if runtime.GOOS == "windows" {
+		// Detect if running in Git Bash or similar Unix-like environment on Windows
+		isGitBash := os.Getenv("MSYSTEM") != "" || os.Getenv("TERM") != "" || strings.Contains(strings.ToLower(os.Getenv("SHELL")), "bash")
+
+		if isGitBash {
+			fmt.Println("\n📝 For Git Bash/MSYS2 (add to ~/.bashrc):")
+			fmt.Printf("   echo 'export PATH=\"%s:%s:$PATH\"' >> ~/.bashrc\n", currentBinPath, nvs.BinDir)
+			fmt.Println("   source ~/.bashrc")
+		} else {
+			fmt.Println("\n📝 For Command Prompt/PowerShell (run as admin):")
+			fmt.Printf("   setx PATH \"%s;%s;%%PATH%%\"\n", currentBinPath, nvs.BinDir)
+		}
+
+		fmt.Println("\n📝 Alternative - Manual setup:")
+		fmt.Println("   1. Open System Properties → Environment Variables")
+		fmt.Printf("   2. Add these paths to your PATH variable:\n")
+		fmt.Printf("      %s\n", currentBinPath)
+		fmt.Printf("      %s\n", nvs.BinDir)
+	} else {
+		// Detect shell
+		shell := os.Getenv("SHELL")
+		configFile := "~/.bashrc"
+		if strings.Contains(shell, "zsh") {
+			configFile = "~/.zshrc"
+		}
+
+		fmt.Printf("\n📝 For %s (add to %s):\n", filepath.Base(shell), configFile)
+		fmt.Printf("   echo 'export PATH=\"%s:%s:$PATH\"' >> %s\n", currentBinPath, nvs.BinDir, configFile)
+		fmt.Printf("   source %s\n", configFile)
+	}
+
+	fmt.Println("\n✅ After setup, you can:")
+	fmt.Println("   • Run 'nvs' from anywhere")
+	fmt.Println("   • Use 'nvs use <version>' to switch Node.js versions instantly")
+	fmt.Println("   • Node.js commands (node, npm, npx) will automatically use the current version")
+
+	fmt.Println("\n💡 Benefits of permanent setup:")
+	fmt.Println("   ✓ No need to export PATH manually each time")
+	fmt.Println("   ✓ Works across all terminal sessions")
+	fmt.Println("   ✓ Automatically updates when you switch versions")
+
+	return nil
+}
+
 // ShowHelp displays help information
 func (nvs *NodeVersionSwitcher) ShowHelp() {
 	help := `
@@ -673,21 +904,27 @@ USAGE:
 
 COMMANDS:
   install <version> [--os <os>] [--arch <arch>]   Install a Node.js version
-  use <version> [--os <os>] [--arch <arch>]       Switch to a Node.js version  
+  use <version> [--os <os>] [--arch <arch>] [--global]  Switch to a Node.js version  
   list                                            List all installed versions
   current                                         Show currently active version
+  setup                                           Show permanent PATH setup instructions
   uninstall <version>                             Remove a Node.js version
   help                                            Show this help message
 
-CROSS-PLATFORM OPTIONS:
-  --os <platform>       Target OS: windows, linux, darwin (default: current OS)
-  --arch <architecture> Target arch: x64, arm64, x86 (default: current arch)
+FLAGS:
+  --global                                        Set Node.js version globally for all sessions
+  --os <platform>                                 Target OS: windows, linux, darwin (default: current OS)
+  --arch <architecture>                           Target arch: x64, arm64, x86 (default: current arch)
 
 EXAMPLES:
   # Basic usage
   nvs install 18.17.0                    # Install for current platform
-  nvs use 18.17.0                        # Switch to v18.17.0
+  nvs use 18.17.0                        # Switch to v18.17.0 (current session only)
+  nvs use 18.17.0 --global               # Switch to v18.17.0 globally (all sessions)
   nvs list                               # Show all installed versions
+  
+  # One-time setup (alternative to --global)
+  nvs setup                              # Show permanent PATH setup instructions
   
   # Cross-platform installation  
   nvs install 20.5.0 --os linux --arch x64      # Install Linux x64 version
@@ -696,6 +933,7 @@ EXAMPLES:
   
   # Use cross-platform versions
   nvs use 20.5.0 --os linux --arch x64          # Use Linux version (if compatible)
+  nvs use 20.5.0 --os linux --arch x64 --global # Set Linux version globally
 
 SUPPORTED PLATFORMS:
   • Windows (windows, win) - x64, x86, arm64
@@ -706,9 +944,16 @@ FEATURES:
   ✅ No admin/root privileges required
   ✅ Cross-platform installation support
   ✅ Single binary - no dependencies
-  ✅ Fast version switching
+  ✅ Fast version switching (local and global)
   ✅ Isolated installations
   ✅ Multiple architectures per version
+  ✅ Git Bash / MSYS2 support on Windows
+  ✅ Session-specific and global environment setup
+
+SESSION MANAGEMENT:
+  • 'nvs use <version>' - Sets version for current session only
+  • 'nvs use <version> --global' - Sets version globally for all sessions
+  • 'nvs setup' - Manual permanent PATH configuration
 
 All Node.js versions are installed to: ~/.nvs/versions/
 `
@@ -758,8 +1003,9 @@ func main() {
 		Run: func(cmd *cobra.Command, args []string) {
 			targetOS, _ := cmd.Flags().GetString("os")
 			targetArch, _ := cmd.Flags().GetString("arch")
+			global, _ := cmd.Flags().GetBool("global")
 
-			if err := nvs.Use(args[0], targetOS, targetArch); err != nil {
+			if err := nvs.Use(args[0], targetOS, targetArch, global); err != nil {
 				fmt.Printf("❌ Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -767,6 +1013,7 @@ func main() {
 	}
 	useCmd.Flags().String("os", "", "Target OS: windows, linux, darwin")
 	useCmd.Flags().String("arch", "", "Target arch: x64, arm64, x86")
+	useCmd.Flags().Bool("global", false, "Set globally for all terminal sessions")
 
 	// List command
 	var listCmd = &cobra.Command{
@@ -787,6 +1034,18 @@ func main() {
 		Short: "Show currently active version",
 		Run: func(cmd *cobra.Command, args []string) {
 			if err := nvs.Current(); err != nil {
+				fmt.Printf("❌ Error: %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}
+
+	// Setup command
+	var setupCmd = &cobra.Command{
+		Use:   "setup",
+		Short: "Show instructions for permanent PATH setup",
+		Run: func(cmd *cobra.Command, args []string) {
+			if err := nvs.Setup(); err != nil {
 				fmt.Printf("❌ Error: %v\n", err)
 				os.Exit(1)
 			}
@@ -816,7 +1075,7 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(installCmd, useCmd, listCmd, currentCmd, uninstallCmd, helpCmd)
+	rootCmd.AddCommand(installCmd, useCmd, listCmd, currentCmd, setupCmd, uninstallCmd, helpCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Printf("❌ Error: %v\n", err)
