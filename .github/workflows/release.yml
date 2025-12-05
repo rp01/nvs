@@ -21,29 +21,25 @@ jobs:
     strategy:
       matrix:
         include:
-          # Linux
+          # Linux x64 (most common)
           - goos: linux
             goarch: amd64
             os: ubuntu-latest
             output: nvs-installer-linux-amd64
             
-          - goos: linux
-            goarch: arm64
-            os: ubuntu-latest
-            output: nvs-installer-linux-arm64
-            
-          # macOS
+          # macOS Intel
           - goos: darwin
             goarch: amd64
-            os: macos-latest
+            os: macos-13
             output: nvs-installer-macos-amd64
             
+          # macOS Apple Silicon
           - goos: darwin
             goarch: arm64
             os: macos-latest
             output: nvs-installer-macos-arm64
             
-          # Windows
+          # Windows x64 (most common)
           - goos: windows
             goarch: amd64
             os: windows-latest
@@ -74,6 +70,57 @@ jobs:
           CGO_ENABLED: 1
         run: |
           go build -ldflags="-s -w -X main.Version=${GITHUB_REF#refs/tags/}" -o ${{ matrix.output }} .
+          
+      - name: Set executable permissions and create macOS app bundle
+        if: matrix.goos == 'darwin'
+        run: |
+          # Set executable permissions
+          chmod +x ${{ matrix.output }}
+          
+          # Create .app bundle for better macOS integration
+          APP_NAME="NVS Installer.app"
+          mkdir -p "$APP_NAME/Contents/MacOS"
+          mkdir -p "$APP_NAME/Contents/Resources"
+          
+          # Move binary to app bundle
+          mv ${{ matrix.output }} "$APP_NAME/Contents/MacOS/NVS Installer"
+          
+          # Create Info.plist
+          cat > "$APP_NAME/Contents/Info.plist" << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>NVS Installer</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.nvs.installer</string>
+              <key>CFBundleName</key>
+              <string>NVS Installer</string>
+              <key>CFBundleVersion</key>
+              <string>1.0</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+          
+          # Create zip archive for the app bundle
+          zip -r "${{ matrix.output }}.zip" "$APP_NAME"
+          
+          # Also keep the original binary for CLI users who prefer it
+          cp "$APP_NAME/Contents/MacOS/NVS Installer" ${{ matrix.output }}
+          chmod +x ${{ matrix.output }}
+
+      - name: Set executable permissions (Linux)
+        if: matrix.goos == 'linux'
+        run: chmod +x ${{ matrix.output }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -117,22 +164,38 @@ jobs:
           generate_release_notes: true
           files: |
             nvs-installer-linux-amd64
-            nvs-installer-linux-arm64
             nvs-installer-macos-amd64
             nvs-installer-macos-arm64
+            nvs-installer-macos-amd64.zip
+            nvs-installer-macos-arm64.zip
             nvs-installer-windows-amd64.exe
           body: |
             ## 🚀 NVS - Node Version Switcher
             
             ### Smart Installer with GUI
             Download and run the installer for your platform. The installer will:
-            - Detect existing NVS installations
+            - Detect existing NVS installations  
             - Offer install/update/uninstall options
             - Create both CLI (`nvs`) and GUI (`nvs-ui`) binaries
             - No admin privileges required
             
-            **Windows:** Double-click `nvs-installer-windows-amd64.exe`
-            **macOS:** `chmod +x nvs-installer-macos-* && ./nvs-installer-macos-*`
-            **Linux:** `chmod +x nvs-installer-linux-* && ./nvs-installer-linux-*`
+            ### Installation Instructions
+            
+            **Windows:**
+            - Download `nvs-installer-windows-amd64.exe`
+            - Double-click to run
+            
+            **macOS (Recommended - App Bundle):**
+            - Download `nvs-installer-macos-*.zip` (Intel: amd64, Apple Silicon: arm64)
+            - Unzip and double-click `NVS Installer.app`
+            - If macOS shows "unidentified developer" warning, right-click → Open
+            
+            **macOS (Command Line):**
+            - Download `nvs-installer-macos-*` (no .zip extension)
+            - Run: `chmod +x nvs-installer-macos-* && ./nvs-installer-macos-*`
+            
+            **Linux:**
+            - Download `nvs-installer-linux-amd64` (x64)
+            - Run: `chmod +x nvs-installer-linux-amd64 && ./nvs-installer-linux-amd64`
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
