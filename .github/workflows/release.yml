@@ -1,13 +1,13 @@
-name: Release
+name: Release NVS
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release'
+        description: "Tag to release"
         required: true
         type: string
 
@@ -16,47 +16,59 @@ permissions:
 
 jobs:
   build:
-    name: Build for ${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ${{ matrix.os }}
+    name: Build NVS for ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          # Linux
+          # Linux x64
           - goos: linux
             goarch: amd64
-            os: ubuntu-latest
-            output: nvs-linux-x64
-            
+            output: nvs-linux-amd64
+
+          # Linux ARM64
           - goos: linux
             goarch: arm64
-            os: ubuntu-latest
             output: nvs-linux-arm64
-            
-          # macOS
+
+          # macOS Intel
           - goos: darwin
             goarch: amd64
-            os: macos-latest
-            output: nvs-macos-x64
-            
+            output: nvs-macos-amd64
+
+          # macOS Apple Silicon
           - goos: darwin
             goarch: arm64
-            os: macos-latest
             output: nvs-macos-arm64
-            
-          # Windows
+
+          # Windows x64
           - goos: windows
             goarch: amd64
-            os: windows-latest
-            output: nvs-windows-x64.exe
+            output: nvs-windows-amd64.exe
+
+          # Windows ARM64
+          - goos: windows
+            goarch: arm64
+            output: nvs-windows-arm64.exe
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: "1.25"
+
+      - name: Get version from tag
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Build binary
         env:
@@ -64,7 +76,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w" -o ${{ matrix.output }} .
+          go build -ldflags="-s -w -X main.VERSION=${{ steps.version.outputs.version }}" -o ${{ matrix.output }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -88,6 +100,7 @@ jobs:
       - name: Move artifacts to root
         run: |
           find ./artifacts -type f -exec mv {} ./ \;
+          ls -la
 
       - name: Get tag name
         id: tag
@@ -102,15 +115,73 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
+          name: NVS ${{ steps.tag.outputs.tag }}
           draft: false
           prerelease: false
           generate_release_notes: true
           files: |
-            nvs-linux-x64
+            nvs-linux-amd64
             nvs-linux-arm64
-            nvs-macos-x64
+            nvs-macos-amd64
             nvs-macos-arm64
-            nvs-windows-x64.exe
+            nvs-windows-amd64.exe
+            nvs-windows-arm64.exe
+          body: |
+            ## 🚀 NVS - Node Version Switcher
+
+            A fast, lightweight Node.js version manager. **No admin privileges required!**
+
+            ### Features
+            - ✅ Interactive TUI (just run `nvs` with no arguments)
+            - ✅ Simple CLI commands
+            - ✅ Works on Windows, macOS, and Linux
+            - ✅ No dependencies, single binary
+            - ✅ No admin/root required
+
+            ### Installation
+
+            **Windows:**
+            ```powershell
+            # Download and run
+            Invoke-WebRequest -Uri "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nvs-windows-amd64.exe" -OutFile "nvs.exe"
+            .\nvs.exe setup
+            ```
+
+            **macOS (Apple Silicon):**
+            ```bash
+            curl -L "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nvs-macos-arm64" -o nvs
+            chmod +x nvs
+            ./nvs setup
+            ```
+
+            **macOS (Intel):**
+            ```bash
+            curl -L "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nvs-macos-amd64" -o nvs
+            chmod +x nvs
+            ./nvs setup
+            ```
+
+            **Linux (x64):**
+            ```bash
+            curl -L "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nvs-linux-amd64" -o nvs
+            chmod +x nvs
+            ./nvs setup
+            ```
+
+            ### Quick Start
+            ```bash
+            # Launch interactive TUI
+            nvs
+
+            # Or use CLI commands
+            nvs install 22      # Install Node.js 22
+            nvs install lts     # Install latest LTS
+            nvs use 22          # Switch to Node.js 22
+            nvs list            # List installed versions
+            nvs current         # Show active version
+            ```
+
+            ### Upgrading
+            Download the new binary and replace the existing one, or run `nvs setup` again.
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
