@@ -13,35 +13,50 @@ import (
 )
 
 // =============================================================================
-// STYLES
+// STYLES - Modern Theme
 // =============================================================================
 
 var (
-	// Colors
-	primaryColor   = lipgloss.Color("#7C3AED")
-	successColor   = lipgloss.Color("#10B981")
-	errorColor     = lipgloss.Color("#EF4444")
-	warningColor   = lipgloss.Color("#F59E0B")
-	mutedColor     = lipgloss.Color("#6B7280")
-	textColor      = lipgloss.Color("#F3F4F6")
-	highlightColor = lipgloss.Color("#A78BFA")
+	// Color palette - Modern dark theme
+	primaryColor   = lipgloss.Color("#8B5CF6") // Vibrant purple
+	secondaryColor = lipgloss.Color("#06B6D4") // Cyan accent
+	successColor   = lipgloss.Color("#22C55E") // Green
+	errorColor     = lipgloss.Color("#EF4444") // Red
+	warningColor   = lipgloss.Color("#FBBF24") // Amber
+	mutedColor     = lipgloss.Color("#64748B") // Slate
+	textColor      = lipgloss.Color("#F1F5F9") // Light text
+	dimTextColor   = lipgloss.Color("#94A3B8") // Dimmed text
+	highlightColor = lipgloss.Color("#C4B5FD") // Light purple
+	bgAccent       = lipgloss.Color("#1E293B") // Dark background accent
+	borderColor    = lipgloss.Color("#475569") // Border
 
-	// Styles
+	// Logo/Header style
+	logoStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(primaryColor)
+
+	logoAccentStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(secondaryColor)
+
+	// Title styles
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(primaryColor).
 			MarginBottom(1)
 
 	subtitleStyle = lipgloss.NewStyle().
-			Foreground(mutedColor).
+			Foreground(dimTextColor).
 			Italic(true)
 
+	// Main container box
 	boxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(mutedColor).
-			Padding(1, 2).
+			BorderForeground(borderColor).
+			Padding(1, 3).
 			MarginTop(1)
 
+	// Menu item styles
 	selectedStyle = lipgloss.NewStyle().
 			Foreground(successColor).
 			Bold(true)
@@ -52,6 +67,7 @@ var (
 	dimStyle = lipgloss.NewStyle().
 			Foreground(mutedColor)
 
+	// Message styles
 	successMsgStyle = lipgloss.NewStyle().
 			Foreground(successColor).
 			Bold(true)
@@ -60,14 +76,70 @@ var (
 			Foreground(errorColor).
 			Bold(true)
 
+	// Help/footer style
 	helpStyle = lipgloss.NewStyle().
 			Foreground(mutedColor).
 			MarginTop(1)
 
+	// Version highlight
 	versionCurrentStyle = lipgloss.NewStyle().
 				Foreground(highlightColor).
 				Bold(true)
+
+	// Status bar style
+	statusBarStyle = lipgloss.NewStyle().
+			Foreground(dimTextColor).
+			Italic(true)
+
+	// Accent badge style
+	badgeStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#000000")).
+			Background(primaryColor).
+			Padding(0, 1).
+			Bold(true)
+
+	// Warning badge
+	warningBadgeStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("#000000")).
+				Background(warningColor).
+				Padding(0, 1).
+				Bold(true)
 )
+
+// ASCII Logo
+func getLogo() string {
+	n := logoStyle.Render("███╗   ██╗")
+	v := logoAccentStyle.Render("██╗   ██╗")
+	s := logoStyle.Render("███████╗")
+
+	n2 := logoStyle.Render("████╗  ██║")
+	v2 := logoAccentStyle.Render("██║   ██║")
+	s2 := logoStyle.Render("██╔════╝")
+
+	n3 := logoStyle.Render("██╔██╗ ██║")
+	v3 := logoAccentStyle.Render("██║   ██║")
+	s3 := logoStyle.Render("███████╗")
+
+	n4 := logoStyle.Render("██║╚██╗██║")
+	v4 := logoAccentStyle.Render("╚██╗ ██╔╝")
+	s4 := logoStyle.Render("╚════██║")
+
+	n5 := logoStyle.Render("██║ ╚████║")
+	v5 := logoAccentStyle.Render(" ╚████╔╝ ")
+	s5 := logoStyle.Render("███████║")
+
+	n6 := logoStyle.Render("╚═╝  ╚═══╝")
+	v6 := logoAccentStyle.Render("  ╚═══╝  ")
+	s6 := logoStyle.Render("╚══════╝")
+
+	return fmt.Sprintf("%s%s%s\n%s%s%s\n%s%s%s\n%s%s%s\n%s%s%s\n%s%s%s",
+		n, v, s, n2, v2, s2, n3, v3, s3, n4, v4, s4, n5, v5, s5, n6, v6, s6)
+}
+
+// Compact header for sub-views
+func getCompactHeader() string {
+	return logoStyle.Render("NVS") + " " + dimStyle.Render("Node Version Switcher")
+}
 
 // =============================================================================
 // TYPES
@@ -78,9 +150,9 @@ type viewState int
 const (
 	viewMainMenu viewState = iota
 	viewInstallInput
-	viewSelectVersion
+	viewInstallOptions
+	viewManageVersions
 	viewSelectUninstall
-	viewListVersions
 	viewProcessing
 	viewResult
 )
@@ -125,6 +197,7 @@ type model struct {
 	quitting          bool
 	width             int
 	height            int
+	pendingVersion    string // Version to install (used in install options flow)
 }
 
 func initialModel() model {
@@ -143,10 +216,10 @@ func initialModel() model {
 		cursor: 0,
 		menuItems: []menuItem{
 			{"📦", "Install Node.js", "Download and install a new version", "install"},
-			{"🔄", "Switch Version", "Change the active Node.js version", "use"},
-			{"📋", "List Versions", "Show all installed versions (Enter to switch)", "list"},
+			{"📋", "List/Switch", "View installed versions and switch between them", "list"},
 			{"🗑️ ", "Uninstall", "Remove an installed version", "uninstall"},
 			{"🔧", "Setup", "Initialize NVS and configure PATH", "setup"},
+			{"🔓", "Toggle TLS Skip", "Skip TLS verification (for VPN/proxy issues)", "tls"},
 			{"❓", "Help", "Show usage information", "help"},
 			{"👋", "Exit", "Quit NVS", "exit"},
 		},
@@ -192,9 +265,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				version := strings.TrimSpace(m.textInput.Value())
 				if version != "" {
-					m.state = viewProcessing
-					m.processingMsg = fmt.Sprintf("Installing Node.js %s...", version)
-					return m, tea.Batch(m.spinner.Tick, m.installCmd(version))
+					m.pendingVersion = version
+					m.state = viewInstallOptions
+					m.cursor = 0
 				}
 				return m, nil
 			default:
@@ -203,6 +276,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.textInput, cmd = m.textInput.Update(msg)
 				return m, cmd
 			}
+		}
+
+		// Handle install options selection
+		if m.state == viewInstallOptions {
+			return m.handleInstallOptions(msg)
 		}
 		// For other states, use the key handler
 		return m.handleKeyPress(msg)
@@ -249,7 +327,7 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.state {
 	case viewMainMenu:
 		return m.handleMainMenu(msg)
-	case viewSelectVersion, viewSelectUninstall, viewListVersions:
+	case viewManageVersions, viewSelectUninstall:
 		return m.handleVersionSelect(msg)
 	case viewResult:
 		if msg.Type == tea.KeyEnter || key == " " {
@@ -294,11 +372,11 @@ func (m model) handleVersionSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	selectVersion := func() (tea.Model, tea.Cmd) {
 		if len(m.installedVersions) > 0 && m.cursor < len(m.installedVersions) {
 			version := m.installedVersions[m.cursor]
-			if m.state == viewSelectVersion || m.state == viewListVersions {
+			if m.state == viewManageVersions {
 				m.state = viewProcessing
 				m.processingMsg = fmt.Sprintf("Switching to %s...", version)
 				return m, tea.Batch(m.spinner.Tick, m.useCmd(version))
-			} else {
+			} else if m.state == viewSelectUninstall {
 				m.state = viewProcessing
 				m.processingMsg = fmt.Sprintf("Uninstalling %s...", version)
 				return m, tea.Batch(m.spinner.Tick, m.uninstallCmd(version))
@@ -336,10 +414,71 @@ func (m model) handleVersionSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) goBack() (tea.Model, tea.Cmd) {
+	if m.state == viewInstallOptions {
+		m.state = viewInstallInput
+		m.cursor = 0
+		return m, nil
+	}
 	if m.state != viewMainMenu && m.state != viewProcessing {
 		m.state = viewMainMenu
 		m.cursor = 0
 		m.textInput.Reset()
+	}
+	return m, nil
+}
+
+func (m model) handleInstallOptions(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyCtrlC:
+		m.quitting = true
+		return m, tea.Quit
+	case tea.KeyEsc:
+		return m.goBack()
+	case tea.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case tea.KeyDown:
+		if m.cursor < 1 {
+			m.cursor++
+		}
+	case tea.KeyEnter:
+		if m.cursor == 0 {
+			// Normal install (secure)
+			insecureMode = false
+		} else {
+			// Insecure install (skip TLS)
+			insecureMode = true
+		}
+		m.state = viewProcessing
+		m.processingMsg = fmt.Sprintf("Installing Node.js %s...", m.pendingVersion)
+		if insecureMode {
+			m.processingMsg += " (TLS skip enabled)"
+		}
+		return m, tea.Batch(m.spinner.Tick, m.installCmd(m.pendingVersion))
+	default:
+		switch msg.String() {
+		case "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "j":
+			if m.cursor < 1 {
+				m.cursor++
+			}
+		case " ":
+			if m.cursor == 0 {
+				insecureMode = false
+			} else {
+				insecureMode = true
+			}
+			m.state = viewProcessing
+			m.processingMsg = fmt.Sprintf("Installing Node.js %s...", m.pendingVersion)
+			if insecureMode {
+				m.processingMsg += " (TLS skip enabled)"
+			}
+			return m, tea.Batch(m.spinner.Tick, m.installCmd(m.pendingVersion))
+		}
 	}
 	return m, nil
 }
@@ -354,17 +493,6 @@ func (m model) executeAction() (tea.Model, tea.Cmd) {
 		m.textInput.Focus()
 		return m, textinput.Blink
 
-	case "use":
-		if len(m.installedVersions) == 0 {
-			m.state = viewResult
-			m.resultSuccess = false
-			m.resultMsg = "No versions installed.\n\nUse 'Install Node.js' to get started."
-			return m, nil
-		}
-		m.state = viewSelectVersion
-		m.cursor = 0
-		return m, nil
-
 	case "list":
 		if len(m.installedVersions) == 0 {
 			m.state = viewResult
@@ -372,7 +500,7 @@ func (m model) executeAction() (tea.Model, tea.Cmd) {
 			m.resultMsg = "No versions installed.\n\nUse 'Install Node.js' to get started."
 			return m, nil
 		}
-		m.state = viewListVersions
+		m.state = viewManageVersions
 		m.cursor = 0
 		return m, nil
 
@@ -391,6 +519,17 @@ func (m model) executeAction() (tea.Model, tea.Cmd) {
 		m.state = viewProcessing
 		m.processingMsg = "Setting up NVS..."
 		return m, tea.Batch(m.spinner.Tick, m.setupCmd())
+
+	case "tls":
+		insecureMode = !insecureMode
+		m.state = viewResult
+		m.resultSuccess = true
+		if insecureMode {
+			m.resultMsg = "🔓 TLS verification DISABLED\n\nCertificate errors will be ignored.\nUse this if behind corporate VPN/proxy (Cato, Zscaler, etc.)"
+		} else {
+			m.resultMsg = "🔒 TLS verification ENABLED\n\nSecure mode restored."
+		}
+		return m, nil
 
 	case "help":
 		m.state = viewResult
@@ -412,16 +551,24 @@ func (m model) executeAction() (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	if m.quitting {
-		return "\n  👋 Goodbye!\n\n"
+		farewell := lipgloss.NewStyle().
+			Foreground(primaryColor).
+			Bold(true).
+			Render("Thanks for using NVS!")
+		return fmt.Sprintf("\n  👋 %s\n\n", farewell)
 	}
 
 	var b strings.Builder
 
-	// Header
+	// Header - Show full logo only on main menu
 	b.WriteString("\n")
-	b.WriteString(titleStyle.Render("🚀 NVS - Node Version Switcher"))
-	b.WriteString("\n")
-	b.WriteString(subtitleStyle.Render("No admin privileges required"))
+	if m.state == viewMainMenu {
+		b.WriteString(getLogo())
+		b.WriteString("\n")
+		b.WriteString(subtitleStyle.Render("  Node Version Switcher • No admin required"))
+	} else {
+		b.WriteString(getCompactHeader())
+	}
 	b.WriteString("\n")
 
 	// Content
@@ -430,21 +577,23 @@ func (m model) View() string {
 		b.WriteString(m.renderMainMenu())
 	case viewInstallInput:
 		b.WriteString(m.renderInstallInput())
-	case viewSelectVersion:
-		b.WriteString(m.renderVersionSelect("Select version to use:", false))
+	case viewInstallOptions:
+		b.WriteString(m.renderInstallOptions())
+	case viewManageVersions:
+		b.WriteString(m.renderVersionSelect("Installed versions (Enter to switch):", false))
 	case viewSelectUninstall:
 		b.WriteString(m.renderVersionSelect("Select version to uninstall:", true))
-	case viewListVersions:
-		b.WriteString(m.renderVersionSelect("Installed versions (Enter to switch):", false))
 	case viewProcessing:
 		b.WriteString(m.renderProcessing())
 	case viewResult:
 		b.WriteString(m.renderResult())
 	}
 
-	// Footer
+	// Footer with key hints
 	b.WriteString("\n")
-	b.WriteString(helpStyle.Render(m.getKeyHints()))
+	hints := m.getKeyHints()
+	styledHints := helpStyle.Render("  " + hints)
+	b.WriteString(styledHints)
 	b.WriteString("\n")
 
 	return b.String()
@@ -453,29 +602,52 @@ func (m model) View() string {
 func (m model) renderMainMenu() string {
 	var b strings.Builder
 
+	b.WriteString("\n")
+
 	for i, item := range m.menuItems {
 		cursor := "   "
 		style := normalStyle
+		icon := dimStyle.Render(item.icon)
+
 		if i == m.cursor {
 			cursor = " ▸ "
 			style = selectedStyle
+			icon = item.icon // Full color when selected
 		}
 
-		b.WriteString(fmt.Sprintf("%s%s %s\n", cursor, item.icon, style.Render(item.title)))
+		b.WriteString(fmt.Sprintf("%s%s  %s\n", cursor, icon, style.Render(item.title)))
 
 		// Show description for selected item
 		if i == m.cursor {
-			b.WriteString(fmt.Sprintf("     %s\n", dimStyle.Render(item.description)))
+			b.WriteString(fmt.Sprintf("       %s\n", dimStyle.Render(item.description)))
 		}
 	}
 
-	// Status line
+	// Status bar
 	b.WriteString("\n")
-	status := fmt.Sprintf("📦 %d version(s) installed", len(m.installedVersions))
-	if m.currentVersion != "" {
-		status += fmt.Sprintf("  •  Active: %s", m.currentVersion)
+	b.WriteString(strings.Repeat("─", 44))
+	b.WriteString("\n")
+
+	// Version count badge
+	versionCount := fmt.Sprintf(" %d installed ", len(m.installedVersions))
+	if len(m.installedVersions) > 0 {
+		b.WriteString(badgeStyle.Render(versionCount))
+	} else {
+		b.WriteString(dimStyle.Render("  No versions installed"))
 	}
-	b.WriteString(dimStyle.Render(status))
+
+	// Current version
+	if m.currentVersion != "" {
+		b.WriteString("  ")
+		b.WriteString(dimStyle.Render("Active: "))
+		b.WriteString(versionCurrentStyle.Render(m.currentVersion))
+	}
+
+	// TLS warning badge
+	if insecureMode {
+		b.WriteString("  ")
+		b.WriteString(warningBadgeStyle.Render(" TLS SKIP "))
+	}
 
 	return boxStyle.Render(b.String())
 }
@@ -483,10 +655,79 @@ func (m model) renderMainMenu() string {
 func (m model) renderInstallInput() string {
 	var b strings.Builder
 
-	b.WriteString("Enter Node.js version to install:\n\n")
+	// Section header
+	header := lipgloss.NewStyle().
+		Foreground(primaryColor).
+		Bold(true).
+		Render("📦 Install Node.js")
+
+	b.WriteString(header)
+	b.WriteString("\n\n")
+
+	b.WriteString(dimStyle.Render("Enter version:"))
+	b.WriteString("\n\n")
+	b.WriteString("  ")
 	b.WriteString(m.textInput.View())
 	b.WriteString("\n\n")
-	b.WriteString(dimStyle.Render("Examples: 18, 20, 22, lts, latest, 20.10.0"))
+
+	// Examples in a nice format
+	exampleStyle := lipgloss.NewStyle().Foreground(secondaryColor)
+	b.WriteString(dimStyle.Render("  Examples: "))
+	b.WriteString(exampleStyle.Render("22"))
+	b.WriteString(dimStyle.Render(", "))
+	b.WriteString(exampleStyle.Render("lts"))
+	b.WriteString(dimStyle.Render(", "))
+	b.WriteString(exampleStyle.Render("latest"))
+	b.WriteString(dimStyle.Render(", "))
+	b.WriteString(exampleStyle.Render("20.10.0"))
+
+	return boxStyle.Render(b.String())
+}
+
+func (m model) renderInstallOptions() string {
+	var b strings.Builder
+
+	// Header with version badge
+	header := lipgloss.NewStyle().
+		Foreground(primaryColor).
+		Bold(true).
+		Render("📦 Install Node.js")
+
+	versionBadge := badgeStyle.Render(fmt.Sprintf(" v%s ", m.pendingVersion))
+
+	b.WriteString(header)
+	b.WriteString("  ")
+	b.WriteString(versionBadge)
+	b.WriteString("\n\n")
+
+	b.WriteString(dimStyle.Render("Select connection mode:"))
+	b.WriteString("\n\n")
+
+	options := []struct {
+		icon  string
+		title string
+		desc  string
+	}{
+		{"🔒", "Normal (Secure)", "Standard HTTPS with certificate verification"},
+		{"🔓", "Skip TLS Verification", "For corporate VPN/proxy (Cato, Zscaler, etc.)"},
+	}
+
+	for i, opt := range options {
+		cursor := "   "
+		style := normalStyle
+		icon := dimStyle.Render(opt.icon)
+
+		if i == m.cursor {
+			cursor = " ▸ "
+			style = selectedStyle
+			icon = opt.icon
+		}
+
+		b.WriteString(fmt.Sprintf("%s%s  %s\n", cursor, icon, style.Render(opt.title)))
+		if i == m.cursor {
+			b.WriteString(fmt.Sprintf("       %s\n", dimStyle.Render(opt.desc)))
+		}
+	}
 
 	return boxStyle.Render(b.String())
 }
@@ -494,34 +735,49 @@ func (m model) renderInstallInput() string {
 func (m model) renderVersionSelect(title string, isDanger bool) string {
 	var b strings.Builder
 
-	b.WriteString(title)
+	// Header icon based on mode
+	headerIcon := "📋"
+	if isDanger {
+		headerIcon = "🗑️"
+	}
+
+	header := lipgloss.NewStyle().
+		Foreground(primaryColor).
+		Bold(true).
+		Render(fmt.Sprintf("%s %s", headerIcon, title))
+
+	b.WriteString(header)
 	b.WriteString("\n\n")
 
 	if len(m.installedVersions) == 0 {
-		b.WriteString(dimStyle.Render("No versions installed"))
+		b.WriteString(dimStyle.Render("  No versions installed"))
 	} else {
 		for i, v := range m.installedVersions {
 			cursor := "   "
 			style := normalStyle
 			suffix := ""
+			icon := dimStyle.Render("○")
 
 			if i == m.cursor {
 				cursor = " ▸ "
+				icon = "●"
 				if isDanger {
-					style = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Bold(true)
+					style = lipgloss.NewStyle().Foreground(errorColor).Bold(true)
+					icon = lipgloss.NewStyle().Foreground(errorColor).Render("●")
 				} else {
 					style = selectedStyle
+					icon = lipgloss.NewStyle().Foreground(successColor).Render("●")
 				}
 			}
 
 			if v == m.currentVersion {
-				suffix = " (current)"
+				suffix = " ★ current"
 				if i == m.cursor && !isDanger {
 					style = versionCurrentStyle
 				}
 			}
 
-			b.WriteString(fmt.Sprintf("%s%s%s\n", cursor, style.Render(v), dimStyle.Render(suffix)))
+			b.WriteString(fmt.Sprintf("%s%s %s%s\n", cursor, icon, style.Render(v), dimStyle.Render(suffix)))
 		}
 	}
 
@@ -531,11 +787,22 @@ func (m model) renderVersionSelect(title string, isDanger bool) string {
 func (m model) renderProcessing() string {
 	var b strings.Builder
 
-	b.WriteString(m.spinner.View())
-	b.WriteString(" ")
-	b.WriteString(m.processingMsg)
+	// Animated spinner with message
+	spinnerView := lipgloss.NewStyle().
+		Foreground(secondaryColor).
+		Render(m.spinner.View())
+
+	msgStyle := lipgloss.NewStyle().
+		Foreground(textColor).
+		Bold(true)
+
+	b.WriteString("\n")
+	b.WriteString(spinnerView)
+	b.WriteString("  ")
+	b.WriteString(msgStyle.Render(m.processingMsg))
 	b.WriteString("\n\n")
-	b.WriteString(dimStyle.Render("Please wait..."))
+	b.WriteString(dimStyle.Render("  Please wait..."))
+	b.WriteString("\n")
 
 	return boxStyle.Render(b.String())
 }
@@ -543,14 +810,23 @@ func (m model) renderProcessing() string {
 func (m model) renderResult() string {
 	var b strings.Builder
 
+	// Icon and style based on result
+	icon := "✓"
 	style := successMsgStyle
 	if !m.resultSuccess {
+		icon = "✗"
 		style = errorMsgStyle
 	}
 
+	iconStyle := style.Copy().Bold(true)
+
+	b.WriteString("\n")
+	b.WriteString(iconStyle.Render(icon))
+	b.WriteString("  ")
 	b.WriteString(style.Render(m.resultMsg))
 	b.WriteString("\n\n")
-	b.WriteString(dimStyle.Render("Press Enter to continue..."))
+	b.WriteString(dimStyle.Render("  Press Enter to continue..."))
+	b.WriteString("\n")
 
 	return boxStyle.Render(b.String())
 }
@@ -656,17 +932,24 @@ func (m model) formatVersionList() string {
 }
 
 func (m model) getKeyHints() string {
+	keyStyle := lipgloss.NewStyle().Foreground(secondaryColor)
+	sepStyle := lipgloss.NewStyle().Foreground(mutedColor)
+
+	sep := sepStyle.Render(" │ ")
+
 	switch m.state {
 	case viewMainMenu:
-		return "↑/↓ navigate  •  enter select  •  q quit"
+		return keyStyle.Render("↑↓") + " navigate" + sep + keyStyle.Render("⏎") + " select" + sep + keyStyle.Render("q") + " quit"
 	case viewInstallInput:
-		return "enter install  •  esc back"
-	case viewSelectVersion, viewListVersions:
-		return "↑/↓ navigate  •  enter switch  •  esc back"
+		return keyStyle.Render("⏎") + " continue" + sep + keyStyle.Render("esc") + " back"
+	case viewInstallOptions:
+		return keyStyle.Render("↑↓") + " navigate" + sep + keyStyle.Render("⏎") + " install" + sep + keyStyle.Render("esc") + " back"
+	case viewManageVersions:
+		return keyStyle.Render("↑↓") + " navigate" + sep + keyStyle.Render("⏎") + " switch" + sep + keyStyle.Render("esc") + " back"
 	case viewSelectUninstall:
-		return "↑/↓ navigate  •  enter uninstall  •  esc back"
+		return keyStyle.Render("↑↓") + " navigate" + sep + keyStyle.Render("⏎") + " uninstall" + sep + keyStyle.Render("esc") + " back"
 	case viewResult:
-		return "enter continue"
+		return keyStyle.Render("⏎") + " continue"
 	default:
 		return ""
 	}
