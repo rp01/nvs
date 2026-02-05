@@ -1,13 +1,13 @@
-name: Release NVS Binaries
+name: Release NVS
 
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release'
+        description: "Tag to release"
         required: true
         type: string
 
@@ -16,111 +16,67 @@ permissions:
 
 jobs:
   build:
-    name: Build NVS Installer for ${{ matrix.goos }}-${{ matrix.goarch }}
-    runs-on: ${{ matrix.os }}
+    name: Build NVS for ${{ matrix.goos }}-${{ matrix.goarch }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          # Linux x64 (most common)
+          # Linux x64
           - goos: linux
             goarch: amd64
-            os: ubuntu-latest
-            output: nvs-installer-linux-amd64
-            
+            output: nvs-linux-amd64
+
+          # Linux ARM64
+          - goos: linux
+            goarch: arm64
+            output: nvs-linux-arm64
+
           # macOS Intel
           - goos: darwin
             goarch: amd64
-            os: macos-13
-            output: nvs-installer-macos-amd64
-            
+            output: nvs-macos-amd64
+
           # macOS Apple Silicon
           - goos: darwin
             goarch: arm64
-            os: macos-latest
-            output: nvs-installer-macos-arm64
-            
-          # Windows x64 (most common)
+            output: nvs-macos-arm64
+
+          # Windows x64
           - goos: windows
             goarch: amd64
-            os: windows-latest
-            output: nvs-installer-windows-amd64.exe
+            output: nvs-windows-amd64.exe
+
+          # Windows ARM64
+          - goos: windows
+            goarch: arm64
+            output: nvs-windows-arm64.exe
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: "1.25"
 
-      - name: Install Fyne dependencies (Linux)
-        if: matrix.goos == 'linux'
+      - name: Get version from tag
+        id: version
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev xorg-dev gcc
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-      - name: Install dependencies
-        run: go mod tidy
-
-      - name: Build smart installer
+      - name: Build binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
+          CGO_ENABLED: 0
         run: |
-          go build -ldflags="-s -w -X main.Version=${GITHUB_REF#refs/tags/}" -o ${{ matrix.output }} .
-          
-      - name: Set executable permissions and create macOS app bundle
-        if: matrix.goos == 'darwin'
-        run: |
-          # Set executable permissions
-          chmod +x ${{ matrix.output }}
-          
-          # Create .app bundle for better macOS integration
-          APP_NAME="NVS Installer.app"
-          mkdir -p "$APP_NAME/Contents/MacOS"
-          mkdir -p "$APP_NAME/Contents/Resources"
-          
-          # Move binary to app bundle
-          mv ${{ matrix.output }} "$APP_NAME/Contents/MacOS/NVS Installer"
-          
-          # Create Info.plist
-          cat > "$APP_NAME/Contents/Info.plist" << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>NVS Installer</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.nvs.installer</string>
-              <key>CFBundleName</key>
-              <string>NVS Installer</string>
-              <key>CFBundleVersion</key>
-              <string>1.0</string>
-              <key>CFBundleShortVersionString</key>
-              <string>1.0</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.13</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-          </dict>
-          </plist>
-          EOF
-          
-          # Create zip archive for the app bundle
-          zip -r "${{ matrix.output }}.zip" "$APP_NAME"
-          
-          # Also keep the original binary for CLI users who prefer it
-          cp "$APP_NAME/Contents/MacOS/NVS Installer" ${{ matrix.output }}
-          chmod +x ${{ matrix.output }}
-
-      - name: Set executable permissions (Linux)
-        if: matrix.goos == 'linux'
-        run: chmod +x ${{ matrix.output }}
+          go build -ldflags="-s -w -X main.VERSION=${{ steps.version.outputs.version }}" -o ${{ matrix.output }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -144,6 +100,7 @@ jobs:
       - name: Move artifacts to root
         run: |
           find ./artifacts -type f -exec mv {} ./ \;
+          ls -la
 
       - name: Get tag name
         id: tag
@@ -158,44 +115,73 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          name: Release ${{ steps.tag.outputs.tag }}
+          name: NVS ${{ steps.tag.outputs.tag }}
           draft: false
           prerelease: false
           generate_release_notes: true
           files: |
-            nvs-installer-linux-amd64
-            nvs-installer-macos-amd64
-            nvs-installer-macos-arm64
-            nvs-installer-macos-amd64.zip
-            nvs-installer-macos-arm64.zip
-            nvs-installer-windows-amd64.exe
+            nvs-linux-amd64
+            nvs-linux-arm64
+            nvs-macos-amd64
+            nvs-macos-arm64
+            nvs-windows-amd64.exe
+            nvs-windows-arm64.exe
           body: |
             ## 🚀 NVS - Node Version Switcher
-            
-            ### Smart Installer with GUI
-            Download and run the installer for your platform. The installer will:
-            - Detect existing NVS installations  
-            - Offer install/update/uninstall options
-            - Create both CLI (`nvs`) and GUI (`nvs-ui`) binaries
-            - No admin privileges required
-            
-            ### Installation Instructions
-            
+
+            A fast, lightweight Node.js version manager. **No admin privileges required!**
+
+            ### Features
+            - ✅ Interactive TUI (just run `nvs` with no arguments)
+            - ✅ Simple CLI commands
+            - ✅ Works on Windows, macOS, and Linux
+            - ✅ No dependencies, single binary
+            - ✅ No admin/root required
+
+            ### Installation
+
             **Windows:**
-            - Download `nvs-installer-windows-amd64.exe`
-            - Double-click to run
-            
-            **macOS (Recommended - App Bundle):**
-            - Download `nvs-installer-macos-*.zip` (Intel: amd64, Apple Silicon: arm64)
-            - Unzip and double-click `NVS Installer.app`
-            - If macOS shows "unidentified developer" warning, right-click → Open
-            
-            **macOS (Command Line):**
-            - Download `nvs-installer-macos-*` (no .zip extension)
-            - Run: `chmod +x nvs-installer-macos-* && ./nvs-installer-macos-*`
-            
-            **Linux:**
-            - Download `nvs-installer-linux-amd64` (x64)
-            - Run: `chmod +x nvs-installer-linux-amd64 && ./nvs-installer-linux-amd64`
+            ```powershell
+            # Download and run
+            Invoke-WebRequest -Uri "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nvs-windows-amd64.exe" -OutFile "nvs.exe"
+            .\nvs.exe setup
+            ```
+
+            **macOS (Apple Silicon):**
+            ```bash
+            curl -L "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nvs-macos-arm64" -o nvs
+            chmod +x nvs
+            ./nvs setup
+            ```
+
+            **macOS (Intel):**
+            ```bash
+            curl -L "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nvs-macos-amd64" -o nvs
+            chmod +x nvs
+            ./nvs setup
+            ```
+
+            **Linux (x64):**
+            ```bash
+            curl -L "https://github.com/${{ github.repository }}/releases/download/${{ steps.tag.outputs.tag }}/nvs-linux-amd64" -o nvs
+            chmod +x nvs
+            ./nvs setup
+            ```
+
+            ### Quick Start
+            ```bash
+            # Launch interactive TUI
+            nvs
+
+            # Or use CLI commands
+            nvs install 22      # Install Node.js 22
+            nvs install lts     # Install latest LTS
+            nvs use 22          # Switch to Node.js 22
+            nvs list            # List installed versions
+            nvs current         # Show active version
+            ```
+
+            ### Upgrading
+            Download the new binary and replace the existing one, or run `nvs setup` again.
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
