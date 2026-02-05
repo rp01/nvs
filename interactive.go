@@ -80,6 +80,7 @@ const (
 	viewInstallInput
 	viewSelectVersion
 	viewSelectUninstall
+	viewListVersions
 	viewProcessing
 	viewResult
 )
@@ -143,7 +144,7 @@ func initialModel() model {
 		menuItems: []menuItem{
 			{"📦", "Install Node.js", "Download and install a new version", "install"},
 			{"🔄", "Switch Version", "Change the active Node.js version", "use"},
-			{"📋", "List Versions", "Show all installed versions", "list"},
+			{"📋", "List Versions", "Show all installed versions (Enter to switch)", "list"},
 			{"🗑️ ", "Uninstall", "Remove an installed version", "uninstall"},
 			{"🔧", "Setup", "Initialize NVS and configure PATH", "setup"},
 			{"❓", "Help", "Show usage information", "help"},
@@ -178,6 +179,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
+		// Handle text input first when in install input state
+		if m.state == viewInstallInput {
+			key := msg.String()
+			// Only handle special keys ourselves
+			switch key {
+			case "ctrl+c":
+				m.quitting = true
+				return m, tea.Quit
+			case "esc":
+				return m.goBack()
+			case "enter":
+				version := strings.TrimSpace(m.textInput.Value())
+				if version != "" {
+					m.state = viewProcessing
+					m.processingMsg = fmt.Sprintf("Installing Node.js %s...", version)
+					return m, tea.Batch(m.spinner.Tick, m.installCmd(version))
+				}
+				return m, nil
+			default:
+				// Pass all other keys to text input
+				var cmd tea.Cmd
+				m.textInput, cmd = m.textInput.Update(msg)
+				return m, cmd
+			}
+		}
+		// For other states, use the key handler
 		return m.handleKeyPress(msg)
 
 	case spinner.TickMsg:
@@ -199,46 +226,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.loadVersionsCmd()
 	}
 
-	// Update text input
-	if m.state == viewInstallInput {
-		var cmd tea.Cmd
-		m.textInput, cmd = m.textInput.Update(msg)
-		return m, cmd
-	}
-
 	return m, nil
 }
 
 func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-
 	// Global quit
-	switch key {
-	case "ctrl+c":
+	switch msg.Type {
+	case tea.KeyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
-
-	case "q":
-		if m.state == viewMainMenu {
-			m.quitting = true
-			return m, tea.Quit
-		}
+	case tea.KeyEsc:
 		return m.goBack()
+	}
 
-	case "esc":
-		return m.goBack()
+	key := msg.String()
+	if key == "q" && m.state == viewMainMenu {
+		m.quitting = true
+		return m, tea.Quit
 	}
 
 	// State-specific handling
 	switch m.state {
 	case viewMainMenu:
-		return m.handleMainMenu(key)
-	case viewInstallInput:
-		return m.handleInstallInput(key)
-	case viewSelectVersion, viewSelectUninstall:
-		return m.handleVersionSelect(key)
+		return m.handleMainMenu(msg)
+	case viewSelectVersion, viewSelectUninstall, viewListVersions:
+		return m.handleVersionSelect(msg)
 	case viewResult:
-		if key == "enter" || key == " " {
+		if msg.Type == tea.KeyEnter || key == " " {
 			m.state = viewMainMenu
 			m.cursor = 0
 		}
@@ -247,48 +261,40 @@ func (m model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleMainMenu(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "up", "k":
+func (m model) handleMainMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyUp:
 		if m.cursor > 0 {
 			m.cursor--
 		}
-	case "down", "j":
+	case tea.KeyDown:
 		if m.cursor < len(m.menuItems)-1 {
 			m.cursor++
 		}
-	case "enter", " ":
+	case tea.KeyEnter:
 		return m.executeAction()
-	}
-	return m, nil
-}
-
-func (m model) handleInstallInput(key string) (tea.Model, tea.Cmd) {
-	if key == "enter" {
-		version := strings.TrimSpace(m.textInput.Value())
-		if version != "" {
-			m.state = viewProcessing
-			m.processingMsg = fmt.Sprintf("Installing Node.js %s...", version)
-			return m, tea.Batch(m.spinner.Tick, m.installCmd(version))
+	default:
+		switch msg.String() {
+		case "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "j":
+			if m.cursor < len(m.menuItems)-1 {
+				m.cursor++
+			}
+		case " ":
+			return m.executeAction()
 		}
 	}
 	return m, nil
 }
 
-func (m model) handleVersionSelect(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
-	case "down", "j":
-		if m.cursor < len(m.installedVersions)-1 {
-			m.cursor++
-		}
-	case "enter", " ":
+func (m model) handleVersionSelect(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	selectVersion := func() (tea.Model, tea.Cmd) {
 		if len(m.installedVersions) > 0 && m.cursor < len(m.installedVersions) {
 			version := m.installedVersions[m.cursor]
-			if m.state == viewSelectVersion {
+			if m.state == viewSelectVersion || m.state == viewListVersions {
 				m.state = viewProcessing
 				m.processingMsg = fmt.Sprintf("Switching to %s...", version)
 				return m, tea.Batch(m.spinner.Tick, m.useCmd(version))
@@ -297,6 +303,33 @@ func (m model) handleVersionSelect(key string) (tea.Model, tea.Cmd) {
 				m.processingMsg = fmt.Sprintf("Uninstalling %s...", version)
 				return m, tea.Batch(m.spinner.Tick, m.uninstallCmd(version))
 			}
+		}
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.KeyUp:
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case tea.KeyDown:
+		if m.cursor < len(m.installedVersions)-1 {
+			m.cursor++
+		}
+	case tea.KeyEnter:
+		return selectVersion()
+	default:
+		switch msg.String() {
+		case "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "j":
+			if m.cursor < len(m.installedVersions)-1 {
+				m.cursor++
+			}
+		case " ":
+			return selectVersion()
 		}
 	}
 	return m, nil
@@ -333,9 +366,14 @@ func (m model) executeAction() (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "list":
-		m.state = viewResult
-		m.resultSuccess = true
-		m.resultMsg = m.formatVersionList()
+		if len(m.installedVersions) == 0 {
+			m.state = viewResult
+			m.resultSuccess = false
+			m.resultMsg = "No versions installed.\n\nUse 'Install Node.js' to get started."
+			return m, nil
+		}
+		m.state = viewListVersions
+		m.cursor = 0
 		return m, nil
 
 	case "uninstall":
@@ -393,9 +431,11 @@ func (m model) View() string {
 	case viewInstallInput:
 		b.WriteString(m.renderInstallInput())
 	case viewSelectVersion:
-		b.WriteString(m.renderVersionSelect("Select version to use:"))
+		b.WriteString(m.renderVersionSelect("Select version to use:", false))
 	case viewSelectUninstall:
-		b.WriteString(m.renderVersionSelect("Select version to uninstall:"))
+		b.WriteString(m.renderVersionSelect("Select version to uninstall:", true))
+	case viewListVersions:
+		b.WriteString(m.renderVersionSelect("Installed versions (Enter to switch):", false))
 	case viewProcessing:
 		b.WriteString(m.renderProcessing())
 	case viewResult:
@@ -451,7 +491,7 @@ func (m model) renderInstallInput() string {
 	return boxStyle.Render(b.String())
 }
 
-func (m model) renderVersionSelect(title string) string {
+func (m model) renderVersionSelect(title string, isDanger bool) string {
 	var b strings.Builder
 
 	b.WriteString(title)
@@ -467,12 +507,16 @@ func (m model) renderVersionSelect(title string) string {
 
 			if i == m.cursor {
 				cursor = " ▸ "
-				style = selectedStyle
+				if isDanger {
+					style = lipgloss.NewStyle().Foreground(lipgloss.Color("#EF4444")).Bold(true)
+				} else {
+					style = selectedStyle
+				}
 			}
 
 			if v == m.currentVersion {
 				suffix = " (current)"
-				if i == m.cursor {
+				if i == m.cursor && !isDanger {
 					style = versionCurrentStyle
 				}
 			}
@@ -617,8 +661,10 @@ func (m model) getKeyHints() string {
 		return "↑/↓ navigate  •  enter select  •  q quit"
 	case viewInstallInput:
 		return "enter install  •  esc back"
-	case viewSelectVersion, viewSelectUninstall:
-		return "↑/↓ navigate  •  enter select  •  esc back"
+	case viewSelectVersion, viewListVersions:
+		return "↑/↓ navigate  •  enter switch  •  esc back"
+	case viewSelectUninstall:
+		return "↑/↓ navigate  •  enter uninstall  •  esc back"
 	case viewResult:
 		return "enter continue"
 	default:
