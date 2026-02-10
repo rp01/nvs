@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"archive/zip"
 	"compress/gzip"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -26,6 +27,21 @@ const (
 	NVS_DIR_NAME = ".nvs"
 	VERSION      = "1.0.0"
 )
+
+// Global flag for insecure mode (skip TLS verification)
+var insecureMode = false
+
+// getHTTPClient returns an HTTP client, optionally skipping TLS verification
+func getHTTPClient() *http.Client {
+	if insecureMode {
+		return &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+			},
+		}
+	}
+	return http.DefaultClient
+}
 
 // =============================================================================
 // NODE VERSION SWITCHER
@@ -190,7 +206,7 @@ func (nvs *NodeVersionSwitcher) showPathSetup() error {
 func (nvs *NodeVersionSwitcher) resolveVersion(input string) (string, error) {
 	fmt.Printf("🔎 Resolving version '%s'...\n", input)
 
-	resp, err := http.Get("https://nodejs.org/dist/index.json")
+	resp, err := getHTTPClient().Get("https://nodejs.org/dist/index.json")
 	if err != nil {
 		return "", fmt.Errorf("failed to fetch version index: %w", err)
 	}
@@ -517,7 +533,7 @@ func (nvs *NodeVersionSwitcher) Uninstall(version string) error {
 // downloadFileWithProgress downloads a file with a Charm progress bar
 func downloadFileWithProgress(url string, dest string) error {
 	// First, do a HEAD request to get content length
-	headResp, err := http.Head(url)
+	headResp, err := getHTTPClient().Head(url)
 	if err != nil {
 		return err
 	}
@@ -532,7 +548,7 @@ func downloadFileWithProgress(url string, dest string) error {
 	)
 
 	// Download with progress
-	resp, err := http.Get(url)
+	resp, err := getHTTPClient().Get(url)
 	if err != nil {
 		return err
 	}
@@ -695,6 +711,7 @@ func printHelp() {
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
 	title := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#7C3AED"))
 	cmd := lipgloss.NewStyle().Foreground(lipgloss.Color("#10B981"))
+	flag := lipgloss.NewStyle().Foreground(lipgloss.Color("#F59E0B"))
 
 	fmt.Println()
 	fmt.Println(title.Render("🚀 NVS - Node Version Switcher v" + VERSION))
@@ -711,6 +728,10 @@ func printHelp() {
 	fmt.Printf("   %s                   Initialize NVS and configure PATH\n", cmd.Render("nvs setup"))
 	fmt.Printf("   %s                    Show this help message\n", cmd.Render("nvs help"))
 	fmt.Println()
+	fmt.Println(title.Render("FLAGS:"))
+	fmt.Printf("   %s              Skip TLS certificate verification\n", flag.Render("--insecure"))
+	fmt.Println(help.Render("                         (Use if behind corporate VPN/proxy like Cato, Zscaler)"))
+	fmt.Println()
 	fmt.Println(title.Render("VERSION FORMATS:"))
 	fmt.Println("   22, 20, 18         Latest version of that major release")
 	fmt.Println("   22.1.0             Specific version")
@@ -722,6 +743,7 @@ func printHelp() {
 	fmt.Printf("   %s\n", cmd.Render("nvs install lts"))
 	fmt.Printf("   %s\n", cmd.Render("nvs use 20"))
 	fmt.Printf("   %s\n", cmd.Render("nvs list"))
+	fmt.Printf("   %s      %s\n", cmd.Render("nvs install 22 --insecure"), help.Render("# For VPN/proxy issues"))
 	fmt.Println()
 }
 
@@ -732,14 +754,28 @@ func printHelp() {
 func main() {
 	nvs := NewNodeVersionSwitcher()
 
+	// Parse global flags first
+	args := os.Args[1:]
+	var filteredArgs []string
+	for _, arg := range args {
+		if arg == "--insecure" || arg == "-k" {
+			insecureMode = true
+			if insecureMode {
+				fmt.Println("⚠️  Warning: TLS certificate verification disabled")
+			}
+		} else {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
 	// No arguments - launch interactive TUI
-	if len(os.Args) < 2 {
+	if len(filteredArgs) < 1 {
 		RunInteractiveCLI()
 		return
 	}
 
-	cmd := os.Args[1]
-	args := os.Args[2:]
+	cmd := filteredArgs[0]
+	args = filteredArgs[1:]
 
 	switch cmd {
 	case "install", "i":
